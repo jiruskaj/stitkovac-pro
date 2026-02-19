@@ -5,23 +5,22 @@ from PIL import Image, ImageDraw, ImageFont
 import io
 import textwrap
 import os
-import base64
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
 
-st.set_page_config(page_title="Štítkovač PRO v 2.5.2", layout="wide")
+st.set_page_config(page_title="Štítkovač PRO v 2.6", layout="wide")
 
-# --- CSS PRO VZHLED ---
+# --- CSS ---
 st.markdown("""
     <style>
     .stApp { background-color: #31333F; }
     .main h1, .main h2, .main h3, .main p { color: #000000 !important; }
-    .preview-img img { border: 2px solid #000000; }
+    img { border: 2px solid #000000; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- POMOCNÉ FUNKCE ---
+# --- FUNKCE ---
 def get_working_font(size):
     font_paths = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf", "arial.ttf"]
     for path in font_paths:
@@ -47,13 +46,8 @@ def get_wrapped_text_height(text, font, max_width, spacing):
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Nastavení")
-    volba_velikosti = st.selectbox("Velikost archu / štítků", [
-        "Velké štítky 2x2 (4 ks)",
-        "Střední štítky 3x8 (24 ks)",
-        "Malé štítky 5x13 (65 ks)",
-        "Vlastní velikost (1 ks)"
-    ])
-
+    volba_velikosti = st.selectbox("Velikost archu / štítku", ["Velké štítky 2x2 (4 ks)", "Střední štítky 3x8 (24 ks)", "Malé štítky 5x13 (65 ks)", "Vlastní velikost (1 ks)"])
+    
     orientace_2x2 = "Na výšku"
     if volba_velikosti == "Velké štítky 2x2 (4 ks)":
         orientace_2x2 = st.radio("Orientace štítků 2x2", ["Na výšku", "Na šířku"])
@@ -64,11 +58,7 @@ with st.sidebar:
         "Malé štítky 5x13 (65 ks)": (38, 21.2, 5, 13, 10),
         "Vlastní velikost (1 ks)": (100, 100, 1, 1, 0)
     }
-
     s_mm, v_mm, cols, rows, margin_a4 = layout_map[volba_velikosti]
-    if volba_velikosti == "Vlastní velikost (1 ks)":
-        s_mm = st.number_input("Šířka (mm)", value=100.0)
-        v_mm = st.number_input("Výška (mm)", value=50.0)
 
     st.divider()
     vlastni_text = st.text_area("Text na štítku", "NÁZEV PRODUKTU", height=100)
@@ -80,40 +70,71 @@ with st.sidebar:
     velikost_fontu = st.slider("Velikost písma", 10, 200, 80)
     velikost_eanu = st.slider("Velikost EANu (%)", 10, 100, 45)
     radkovani = st.slider("Řádkování", 0, 50, 5)
-    
+
     st.divider()
     typ_kodu = st.selectbox("Typ kódu", ["ean13", "ean8", "itf"])
     data_kodu = st.text_input("Data kódu", "123456789012")
 
-# --- LOGIKA GENEROVÁNÍ PDF ---
-def generuj_pdf_data():
-    buffer = io.BytesIO()
-    orient_pdf = landscape(A4) if (volba_velikosti == "Velké štítky 2x2 (4 ks)" and orientace_2x2 == "Na šířku") else A4
-    c = canvas.Canvas(buffer, pagesize=orient_pdf)
-    pw, ph = orient_pdf
-    sx, sy = (pw - cols * s_mm * mm) / 2, (ph - rows * v_mm * mm) / 2
-    
-    img_io = io.BytesIO()
-    final_img.save(img_io, format='PNG')
-    from reportlab.lib.utils import ImageReader
-    ir = ImageReader(img_io)
-    
-    for r in range(rows):
-        for col in range(cols):
-            c.drawImage(ir, sx + col*s_mm*mm, ph - (sy + (r+1)*v_mm*mm), width=s_mm*mm, height=v_mm*mm)
-    c.save()
-    return buffer.getvalue()
+    # --- NOVÁ SEKCE: OBRÁZKY ---
+    st.divider()
+    pozice_loga = st.selectbox("Umístění obrázku", [
+        "Bez obrázku", 
+        "Zarovnat na střed", 
+        "Levý horní roh", 
+        "Pravý horní roh", 
+        "Levý spodní roh", 
+        "Pravý spodní roh"
+    ])
 
-# --- HLAVNÍ PLOCHA ---
-st.title("🚀 Štítkovač PRO v 2.5.2")
+    uploaded_file = None
+    selected_icon = None
 
+    if pozice_loga != "Bez obrázku":
+        velikost_loga_mm = st.number_input("Velikost obrázku (mm)", 5, 100, 20)
+        
+        # Načtení ikon ze složky assets
+        icon_folder = "assets"
+        available_icons = []
+        if os.path.exists(icon_folder):
+            available_icons = [f for f in os.listdir(icon_folder) if f.lower().endswith('.png')]
+        
+        if available_icons:
+            selected_icon = st.selectbox("Vybrat ikonu ze serveru", ["Žádná"] + available_icons)
+        
+        uploaded_file = st.file_uploader("Nahrát vlastní PNG", type=["png"])
+
+# --- GENERÁTOR OBRÁZKU ŠTÍTKU ---
 def vytvor_stitek_img(s_mm, v_mm):
     px_w, px_h = int(s_mm * MM_TO_PX), int(v_mm * MM_TO_PX)
     padding_px = int(odsazeni_mm * MM_TO_PX)
-    inner_w, inner_h = px_w - (2 * padding_px), px_h - (2 * padding_px)
     img = Image.new("RGB", (px_w, px_h), barva_pozadi)
     draw = ImageDraw.Draw(img)
+    
+    # 1. LOGIKA LOGA
+    logo_img = None
+    if uploaded_file:
+        logo_img = Image.open(uploaded_file).convert("RGBA")
+    elif selected_icon and selected_icon != "Žádná":
+        logo_img = Image.open(os.path.join("assets", selected_icon)).convert("RGBA")
+
+    if logo_img and pozice_loga != "Bez obrázku":
+        l_size = int(velikost_loga_mm * MM_TO_PX)
+        logo_img.thumbnail((l_size, l_size), Image.Resampling.LANCZOS)
+        lw, lh = logo_img.size
+        
+        # Výpočet souřadnic loga
+        if pozice_loga == "Zarovnat na střed": pos = ((px_w - lw)//2, padding_px)
+        elif pozice_loga == "Levý horní roh": pos = (padding_px, padding_px)
+        elif pozice_loga == "Pravý horní roh": pos = (px_w - lw - padding_px, padding_px)
+        elif pozice_loga == "Levý spodní roh": pos = (padding_px, px_h - lh - padding_px)
+        elif pozice_loga == "Pravý spodní roh": pos = (px_w - lw - padding_px, px_h - lh - padding_px)
+        
+        img.paste(logo_img, pos, logo_img)
+
+    # 2. TEXT A EAN (Zbytek beze změny)
     font_main = get_working_font(int(velikost_fontu))
+    inner_w = px_w - (2 * padding_px)
+    inner_h = px_h - (2 * padding_px)
     lines, text_h = get_wrapped_text_height(vlastni_text, font_main, inner_w, radkovani)
 
     bc_img_final, bc_total_h = None, 0
@@ -134,7 +155,12 @@ def vytvor_stitek_img(s_mm, v_mm):
             bc_img_final, bc_total_h = bc_combined, bc_combined.size[1] + 15
         except: pass
 
-    curr_y = padding_px + (inner_h - (text_h + bc_total_h)) / 2
+    # Výpočet startu textu (pokud je logo na středu, posuneme text pod něj)
+    offset_y = 0
+    if pozice_loga == "Zarovnat na střed" and logo_img:
+        offset_y = logo_img.size[1] + 10
+
+    curr_y = padding_px + offset_y + (inner_h - offset_y - (text_h + bc_total_h)) / 2
     rgb_textu = tuple(int(barva_textu.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
     for line in lines:
         w, h = draw.textbbox((0, 0), line, font=font_main)[2:]
@@ -143,22 +169,29 @@ def vytvor_stitek_img(s_mm, v_mm):
     if bc_img_final: img.paste(bc_img_final, (int((px_w - bc_img_final.size[0])/2), int(curr_y + 10)))
     return img
 
+# --- UI DISPLAY ---
 col_preview, col_actions = st.columns([3, 1])
 with col_preview:
     st.subheader("👁️ Živý náhled")
     final_img = vytvor_stitek_img(s_mm, v_mm)
     st.image(final_img, width=int(s_mm * 3.78))
-    st.caption(f"Aktuální rozměr: {s_mm} x {v_mm} mm")
 
 with col_actions:
-    st.subheader("📄 Akce")
-    pdf_bytes = generuj_pdf_data()
-    
-    # PDF DOWNLOAD
-    st.download_button("⬇️ Stáhnout PDF", pdf_bytes, "stitky.pdf", use_container_width=True)
+    st.subheader("📄 Export")
+    # Logika PDF (stejná jako dříve)
+    buffer = io.BytesIO()
+    orient_pdf = landscape(A4) if (volba_velikosti == "Velké štítky 2x2 (4 ks)" and orientace_2x2 == "Na šířku") else A4
+    c = canvas.Canvas(buffer, pagesize=orient_pdf)
+    pw, ph = orient_pdf
+    sx, sy = (pw - cols * s_mm * mm) / 2, (ph - rows * v_mm * mm) / 2
+    img_io = io.BytesIO()
+    final_img.save(img_io, format='PNG')
+    from reportlab.lib.utils import ImageReader
+    ir = ImageReader(img_io)
+    for r in range(rows):
+        for col in range(cols):
+            c.drawImage(ir, sx + col*s_mm*mm, ph - (sy + (r+1)*v_mm*mm), width=s_mm*mm, height=v_mm*mm)
+    c.save()
+    st.download_button("⬇️ Stáhnout PDF", buffer.getvalue(), "stitky.pdf", use_container_width=True)
 
-   
-
-# PATIČKA
 st.markdown(f"<div style='margin-top:50px; text-align:right;'><p style='color:#000; font-weight:bold;'>Aktuální rozměr: {s_mm} x {v_mm} mm</p></div>", unsafe_allow_html=True)
-
