@@ -10,18 +10,33 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
 
-st.set_page_config(page_title="Štítkovač PRO v 2.5", layout="wide")
+st.set_page_config(page_title="Štítkovač PRO v 2.5.1", layout="wide")
 
-# --- CSS STYLY PRO VZHLED ---
+# --- CSS PRO VZHLED A TISK (Bez vyskakovacích oken) ---
 st.markdown("""
     <style>
     .stApp { background-color: #31333F; }
     .main h1, .main h2, .main h3, .main p { color: #000000 !important; }
-    img { border: 2px solid #000000; }
+    
+    /* Styl pro náhled v aplikaci */
+    .preview-img img { border: 2px solid #000000; }
+
+    /* Speciální instrukce pro tisk - skryje vše kromě štítku */
+    @media print {
+        body * { visibility: hidden; }
+        .print-area, .print-area * { visibility: visible; }
+        .print-area { 
+            position: absolute; 
+            left: 0; top: 0; 
+            width: 100%; 
+            display: flex; 
+            justify-content: center; 
+        }
+    }
     </style>
     """, unsafe_allow_html=True)
 
-# --- POMOCNÁ FUNKCE PRO FONT ---
+# --- POMOCNÉ FUNKCE ---
 def get_working_font(size):
     font_paths = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -29,8 +44,7 @@ def get_working_font(size):
         "arial.ttf"
     ]
     for path in font_paths:
-        if os.path.exists(path):
-            return ImageFont.truetype(path, size)
+        if os.path.exists(path): return ImageFont.truetype(path, size)
     return ImageFont.load_default()
 
 DPI = 300
@@ -71,7 +85,6 @@ with st.sidebar:
     }
 
     s_mm, v_mm, cols, rows, margin_a4 = layout_map[volba_velikosti]
-    
     if volba_velikosti == "Vlastní velikost (1 ks)":
         s_mm = st.number_input("Šířka (mm)", value=100.0)
         v_mm = st.number_input("Výška (mm)", value=50.0)
@@ -92,7 +105,7 @@ with st.sidebar:
     data_kodu = st.text_input("Data kódu", "123456789012")
 
 # --- HLAVNÍ PLOCHA ---
-st.title("🚀 Štítkovač PRO v 2.5")
+st.title("🚀 Štítkovač PRO v 2.5.1")
 
 def vytvor_stitek_img(s_mm, v_mm):
     px_w, px_h = int(s_mm * MM_TO_PX), int(v_mm * MM_TO_PX)
@@ -142,9 +155,9 @@ with col_actions:
     # PDF EXPORT
     if st.button("Vygenerovat PDF", use_container_width=True):
         buffer = io.BytesIO()
-        orientace_pdf = landscape(A4) if (volba_velikosti == "Velké štítky 2x2 (4 ks)" and orientace_2x2 == "Na šířku") else A4
-        c = canvas.Canvas(buffer, pagesize=orientace_pdf)
-        pw, ph = orientace_pdf
+        orient_pdf = landscape(A4) if (volba_velikosti == "Velké štítky 2x2 (4 ks)" and orientace_2x2 == "Na šířku") else A4
+        c = canvas.Canvas(buffer, pagesize=orient_pdf)
+        pw, ph = orient_pdf
         sx, sy = (pw - cols * s_mm * mm) / 2, (ph - rows * v_mm * mm) / 2
         img_io = io.BytesIO()
         final_img.save(img_io, format='PNG')
@@ -156,7 +169,20 @@ with col_actions:
         c.save()
         st.download_button("⬇️ Stáhnout PDF", buffer.getvalue(), "stitky.pdf", use_container_width=True)
 
+    # NOVÝ TISK (Bezpečná metoda přes skrytý prvek)
+    img_buffer = io.BytesIO()
+    final_img.save(img_buffer, format="PNG")
+    img_str = base64.b64encode(img_buffer.getvalue()).decode()
+    
+    if st.button("🖨️ Tisknout", use_container_width=True):
+        st.components.v1.html(f"""
+            <div class="print-area">
+                <img src="data:image/png;base64,{img_str}" style="width:{s_mm}mm; height:{v_mm}mm;">
+            </div>
+            <script>
+                window.print();
+            </script>
+        """, height=0)
 
 # PATIČKA
 st.markdown(f"<div style='margin-top:50px; text-align:right;'><p style='color:#000; font-weight:bold;'>Aktuální rozměr: {s_mm} x {v_mm} mm</p></div>", unsafe_allow_html=True)
-
