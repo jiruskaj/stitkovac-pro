@@ -9,22 +9,36 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 
-st.set_page_config(page_title="Štítkovač PRO v 2.4.3", layout="wide")
+st.set_page_config(page_title="Štítkovač PRO v 2.4.4", layout="wide")
 
-# --- CSS PRO BARVY A RÁMEČEK ---
+# --- AGRESIVNÍ CSS PRO ČERNOU BARVU TEXTU ---
 st.markdown("""
     <style>
     /* Pozadí celé aplikace */
     .stApp {
-        background-color: #f0f2f6;
+        background-color: #f0f2f6 !important;
     }
-    /* Písmo na hlavní ploše - černá (vynechá sidebar) */
-    .main .stMarkdown p, .main h1, .main h2, .main h3, .main span {
+    
+    /* Cílení na hlavní kontejner a všechny jeho textové prvky */
+    section.main h1, section.main h2, section.main h3, 
+    section.main p, section.main span, section.main label,
+    section.main .stMarkdown div p {
+        color: #000000 !important;
+        fill: #000000 !important;
+    }
+
+    /* Specifické přebití pro nadpisy Streamlitu */
+    [data-testid="stHeader"] {
+        background-color: rgba(0,0,0,0) !important;
+    }
+    
+    .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
         color: #000000 !important;
     }
+
     /* Styl pro náhledový obrázek (černá kontura) */
     .stImage img {
-        border: 2px solid #000000;
+        border: 2px solid #000000 !important;
         box-shadow: 5px 5px 15px rgba(0,0,0,0.1);
     }
     </style>
@@ -109,7 +123,7 @@ with st.sidebar:
     data_kodu = st.text_input("Data kódu", "123456789012")
 
 # --- HLAVNÍ PLOCHA ---
-st.title("🚀 Štítkovač PRO v 2.4.3")
+st.title("🚀 Štítkovač PRO v 2.4.4")
 
 def vytvor_stitek_img(s_mm, v_mm):
     px_w, px_h = int(s_mm * MM_TO_PX), int(v_mm * MM_TO_PX)
@@ -206,10 +220,10 @@ with col_actions:
         st.download_button("⬇️ Stáhnout PDF", buffer_pdf.getvalue(), "stitky.pdf", use_container_width=True)
 
 # --- PATIČKA S DYNAMICKÝM ROZMĚREM ---
-st.markdown("<br><br><br>", unsafe_allow_html=True)
-st.markdown(
-    f"<p style='text-align: right; color: #000000; font-size: 0.9rem; font-weight: bold;'>"
-    f"Aktuální rozměr vybraného štítku: {s_mm} x {v_mm} mm"
-    "</p>", 
-    unsafe_allow_html=True
-)
+st.markdown(f"""
+    <div style="margin-top: 50px; text-align: right;">
+        <p style="color: #000000 !important; font-size: 0.9rem; font-weight: bold;">
+            Aktuální rozměr vybraného štítku: {s_mm} x {v_mm} mm
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
