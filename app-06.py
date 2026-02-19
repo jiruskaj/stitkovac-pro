@@ -157,19 +157,8 @@ with col_actions:
     # PDF DOWNLOAD
     st.download_button("⬇️ Stáhnout PDF", pdf_bytes, "stitky.pdf", use_container_width=True)
 
-    # TLAČÍTKO TISK (PDF Metoda)
-    pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
-    if st.button("🖨️ Tisknout arch", use_container_width=True):
-        st.components.v1.html(f"""
-            <iframe id="pdfFrame" src="data:application/pdf;base64,{pdf_base64}" style="display:none;"></iframe>
-            <script>
-                var frame = document.getElementById('pdfFrame');
-                setTimeout(function() {{
-                    frame.contentWindow.focus();
-                    frame.contentWindow.print();
-                }}, 500);
-            </script>
-        """, height=0)
+   
 
 # PATIČKA
 st.markdown(f"<div style='margin-top:50px; text-align:right;'><p style='color:#000; font-weight:bold;'>Aktuální rozměr: {s_mm} x {v_mm} mm</p></div>", unsafe_allow_html=True)
+
