@@ -10,39 +10,20 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
 
-st.set_page_config(page_title="Štítkovač PRO v 2.5.1", layout="wide")
+st.set_page_config(page_title="Štítkovač PRO v 2.5.2", layout="wide")
 
-# --- CSS PRO VZHLED A TISK (Bez vyskakovacích oken) ---
+# --- CSS PRO VZHLED ---
 st.markdown("""
     <style>
     .stApp { background-color: #31333F; }
     .main h1, .main h2, .main h3, .main p { color: #000000 !important; }
-    
-    /* Styl pro náhled v aplikaci */
     .preview-img img { border: 2px solid #000000; }
-
-    /* Speciální instrukce pro tisk - skryje vše kromě štítku */
-    @media print {
-        body * { visibility: hidden; }
-        .print-area, .print-area * { visibility: visible; }
-        .print-area { 
-            position: absolute; 
-            left: 0; top: 0; 
-            width: 100%; 
-            display: flex; 
-            justify-content: center; 
-        }
-    }
     </style>
     """, unsafe_allow_html=True)
 
 # --- POMOCNÉ FUNKCE ---
 def get_working_font(size):
-    font_paths = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
-        "arial.ttf"
-    ]
+    font_paths = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf", "arial.ttf"]
     for path in font_paths:
         if os.path.exists(path): return ImageFont.truetype(path, size)
     return ImageFont.load_default()
@@ -66,7 +47,7 @@ def get_wrapped_text_height(text, font, max_width, spacing):
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Nastavení")
-    volba_velikosti = st.selectbox("Velikost archu / štítku", [
+    volba_velikosti = st.selectbox("Velikost archu / štítků", [
         "Velké štítky 2x2 (4 ks)",
         "Střední štítky 3x8 (24 ks)",
         "Malé štítky 5x13 (65 ks)",
@@ -104,8 +85,27 @@ with st.sidebar:
     typ_kodu = st.selectbox("Typ kódu", ["ean13", "ean8", "itf"])
     data_kodu = st.text_input("Data kódu", "123456789012")
 
+# --- LOGIKA GENEROVÁNÍ PDF ---
+def generuj_pdf_data():
+    buffer = io.BytesIO()
+    orient_pdf = landscape(A4) if (volba_velikosti == "Velké štítky 2x2 (4 ks)" and orientace_2x2 == "Na šířku") else A4
+    c = canvas.Canvas(buffer, pagesize=orient_pdf)
+    pw, ph = orient_pdf
+    sx, sy = (pw - cols * s_mm * mm) / 2, (ph - rows * v_mm * mm) / 2
+    
+    img_io = io.BytesIO()
+    final_img.save(img_io, format='PNG')
+    from reportlab.lib.utils import ImageReader
+    ir = ImageReader(img_io)
+    
+    for r in range(rows):
+        for col in range(cols):
+            c.drawImage(ir, sx + col*s_mm*mm, ph - (sy + (r+1)*v_mm*mm), width=s_mm*mm, height=v_mm*mm)
+    c.save()
+    return buffer.getvalue()
+
 # --- HLAVNÍ PLOCHA ---
-st.title("🚀 Štítkovač PRO v 2.5.1")
+st.title("🚀 Štítkovač PRO v 2.5.2")
 
 def vytvor_stitek_img(s_mm, v_mm):
     px_w, px_h = int(s_mm * MM_TO_PX), int(v_mm * MM_TO_PX)
@@ -152,35 +152,22 @@ with col_preview:
 
 with col_actions:
     st.subheader("📄 Akce")
-    # PDF EXPORT
-    if st.button("Vygenerovat PDF", use_container_width=True):
-        buffer = io.BytesIO()
-        orient_pdf = landscape(A4) if (volba_velikosti == "Velké štítky 2x2 (4 ks)" and orientace_2x2 == "Na šířku") else A4
-        c = canvas.Canvas(buffer, pagesize=orient_pdf)
-        pw, ph = orient_pdf
-        sx, sy = (pw - cols * s_mm * mm) / 2, (ph - rows * v_mm * mm) / 2
-        img_io = io.BytesIO()
-        final_img.save(img_io, format='PNG')
-        from reportlab.lib.utils import ImageReader
-        ir = ImageReader(img_io)
-        for r in range(rows):
-            for col in range(cols):
-                c.drawImage(ir, sx + col*s_mm*mm, ph - (sy + (r+1)*v_mm*mm), width=s_mm*mm, height=v_mm*mm)
-        c.save()
-        st.download_button("⬇️ Stáhnout PDF", buffer.getvalue(), "stitky.pdf", use_container_width=True)
-
-    # NOVÝ TISK (Bezpečná metoda přes skrytý prvek)
-    img_buffer = io.BytesIO()
-    final_img.save(img_buffer, format="PNG")
-    img_str = base64.b64encode(img_buffer.getvalue()).decode()
+    pdf_bytes = generuj_pdf_data()
     
-    if st.button("🖨️ Tisknout", use_container_width=True):
+    # PDF DOWNLOAD
+    st.download_button("⬇️ Stáhnout PDF", pdf_bytes, "stitky.pdf", use_container_width=True)
+
+    # TLAČÍTKO TISK (PDF Metoda)
+    pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
+    if st.button("🖨️ Tisknout arch", use_container_width=True):
         st.components.v1.html(f"""
-            <div class="print-area">
-                <img src="data:image/png;base64,{img_str}" style="width:{s_mm}mm; height:{v_mm}mm;">
-            </div>
+            <iframe id="pdfFrame" src="data:application/pdf;base64,{pdf_base64}" style="display:none;"></iframe>
             <script>
-                window.print();
+                var frame = document.getElementById('pdfFrame');
+                setTimeout(function() {{
+                    frame.contentWindow.focus();
+                    frame.contentWindow.print();
+                }}, 500);
             </script>
         """, height=0)
 
