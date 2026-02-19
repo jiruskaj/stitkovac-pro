@@ -9,7 +9,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
 
-st.set_page_config(page_title="Štítkovač PRO v 2.6.2", layout="wide")
+st.set_page_config(page_title="Štítkovač PRO v 2.6.3", layout="wide")
 
 # --- CSS ---
 st.markdown("""
@@ -17,7 +17,6 @@ st.markdown("""
     .stApp { background-color: #31333F; }
     .main h1, .main h2, .main h3, .main p { color: #000000 !important; }
     img { border: 2px solid #000000; }
-    /* Styl pro galerii ikon */
     div.stButton > button { font-size: 10px; height: 1.5rem; padding: 0px 5px; }
     </style>
     """, unsafe_allow_html=True)
@@ -45,7 +44,7 @@ def get_wrapped_text_height(text, font, max_width, spacing):
         line_heights = [font.size for l in lines]
     return lines, sum(line_heights) + (len(lines) - 1) * spacing
 
-# --- INICIALIZACE SESSION STATE (Pro klikací galerii) ---
+# --- SESSION STATE PRO IKONY ---
 if 'selected_icon' not in st.session_state:
     st.session_state.selected_icon = "Žádná"
 
@@ -90,7 +89,7 @@ with st.sidebar:
     typ_kodu = st.selectbox("Typ kódu", ["ean13", "ean8", "itf"])
     data_kodu = st.text_input("Data kódu", "123456789012")
 
-    # --- OBRÁZKY A KLIKACÍ GALERIE ---
+    # --- OBRÁZKY A IKONY ---
     st.divider()
     pozice_loga = st.selectbox("Umístění obrázku", [
         "Bez obrázku", "Zarovnat na střed nahoru", "Zarovnat na střed dolů",
@@ -100,12 +99,14 @@ with st.sidebar:
     uploaded_file = None
     if pozice_loga != "Bez obrázku":
         velikost_loga_mm = st.slider("Velikost obrázku (mm)", 10, int(min(s_mm, v_mm)), 20)
+        # NOVINKA: Dodatečné odsazení pouze pro obrázek
+        odsazeni_loga_extra = st.slider("Dodatečné odsazení obrázku (mm)", 0, 50, 0)
         
         icon_folder = "assets"
         if os.path.exists(icon_folder):
             available_icons = [f for f in os.listdir(icon_folder) if f.lower().endswith('.png')]
             if available_icons:
-                st.write("🖼️ Galerie ikon (klikni pro výběr):")
+                st.write("🖼️ Galerie ikon:")
                 grid = st.columns(4)
                 for idx, icon_name in enumerate(available_icons):
                     with grid[idx % 4]:
@@ -114,19 +115,21 @@ with st.sidebar:
                             st.session_state.selected_icon = icon_name
                 
                 st.info(f"Vybráno: **{st.session_state.selected_icon}**")
-                if st.button("Zrušit výběr ikony"):
+                if st.button("Zrušit výběr"):
                     st.session_state.selected_icon = "Žádná"
 
-        uploaded_file = st.file_uploader("Nebo nahraj vlastní PNG", type=["png"])
+        uploaded_file = st.file_uploader("Nahrát vlastní PNG", type=["png"])
 
 # --- GENERÁTOR ŠTÍTKU ---
 def vytvor_stitek_img(s_mm, v_mm):
     px_w, px_h = int(s_mm * MM_TO_PX), int(v_mm * MM_TO_PX)
     padding_px = int(odsazeni_mm * MM_TO_PX)
+    # Celkové odsazení loga (hlavní + dodatečné)
+    logo_padding_px = int((odsazeni_mm + odsazeni_loga_extra if pozice_loga != "Bez obrázku" else odsazeni_mm) * MM_TO_PX)
+    
     img = Image.new("RGB", (px_w, px_h), barva_pozadi)
     draw = ImageDraw.Draw(img)
     
-    # 1. LOGIKA LOGA
     logo_img = None
     if uploaded_file:
         logo_img = Image.open(uploaded_file).convert("RGBA")
@@ -139,17 +142,17 @@ def vytvor_stitek_img(s_mm, v_mm):
         logo_img.thumbnail((l_size, l_size), Image.Resampling.LANCZOS)
         lw, lh = logo_img.size
         
-        # Umístění respektující odsazení (padding_px)
-        if pozice_loga == "Zarovnat na střed nahoru": pos = ((px_w - lw)//2, padding_px)
-        elif pozice_loga == "Zarovnat na střed dolů": pos = ((px_w - lw)//2, px_h - lh - padding_px)
-        elif pozice_loga == "Levý horní roh": pos = (padding_px, padding_px)
-        elif pozice_loga == "Pravý horní roh": pos = (px_w - lw - padding_px, padding_px)
-        elif pozice_loga == "Levý spodní roh": pos = (padding_px, px_h - lh - padding_px)
-        elif pozice_loga == "Pravý spodní roh": pos = (px_w - lw - padding_px, px_h - lh - padding_px)
+        # Umístění respektující součet odsazení
+        if pozice_loga == "Zarovnat na střed nahoru": pos = ((px_w - lw)//2, logo_padding_px)
+        elif pozice_loga == "Zarovnat na střed dolů": pos = ((px_w - lw)//2, px_h - lh - logo_padding_px)
+        elif pozice_loga == "Levý horní roh": pos = (logo_padding_px, logo_padding_px)
+        elif pozice_loga == "Pravý horní roh": pos = (px_w - lw - logo_padding_px, logo_padding_px)
+        elif pozice_loga == "Levý spodní roh": pos = (logo_padding_px, px_h - lh - logo_padding_px)
+        elif pozice_loga == "Pravý spodní roh": pos = (px_w - lw - logo_padding_px, px_h - lh - logo_padding_px)
         
         img.paste(logo_img, pos, logo_img)
 
-    # 2. TEXT A EAN
+    # Text a EAN
     font_main = get_working_font(int(velikost_fontu))
     inner_w, inner_h = px_w - (2 * padding_px), px_h - (2 * padding_px)
     lines, text_h = get_wrapped_text_height(vlastni_text, font_main, inner_w, radkovani)
@@ -172,10 +175,10 @@ def vytvor_stitek_img(s_mm, v_mm):
             bc_img_final, bc_total_h = bc_combined, bc_combined.size[1] + 15
         except: pass
 
-    # Dynamické vertikální centrování obsahu
+    # Vertikální centrování - text se vyhýbá logu
     t_mar, b_mar = padding_px, padding_px
-    if pozice_loga == "Zarovnat na střed nahoru" and logo_img: t_mar = lh + padding_px + 10
-    if pozice_loga == "Zarovnat na střed dolů" and logo_img: b_mar = lh + padding_px + 10
+    if pozice_loga == "Zarovnat na střed nahoru" and logo_img: t_mar = lh + logo_padding_px + 10
+    if pozice_loga == "Zarovnat na střed dolů" and logo_img: b_mar = lh + logo_padding_px + 10
 
     curr_y = t_mar + (px_h - t_mar - b_mar - (text_h + bc_total_h)) / 2
     rgb_textu = tuple(int(barva_textu.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
