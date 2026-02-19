@@ -9,14 +9,18 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 
-st.set_page_config(page_title="Štítkovač PRO v 2.4.2", layout="wide")
+st.set_page_config(page_title="Štítkovač PRO v 2.4.3", layout="wide")
 
-# --- CSS PRO ŠEDÉ POZADÍ A RÁMEČEK NÁHLEDU ---
+# --- CSS PRO BARVY A RÁMEČEK ---
 st.markdown("""
     <style>
     /* Pozadí celé aplikace */
     .stApp {
         background-color: #f0f2f6;
+    }
+    /* Písmo na hlavní ploše - černá (vynechá sidebar) */
+    .main .stMarkdown p, .main h1, .main h2, .main h3, .main span {
+        color: #000000 !important;
     }
     /* Styl pro náhledový obrázek (černá kontura) */
     .stImage img {
@@ -26,7 +30,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- NAČTÁNÍ FONTU ---
+# --- NAČÍTÁNÍ FONTU ---
 def get_working_font(size):
     font_paths = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -105,7 +109,7 @@ with st.sidebar:
     data_kodu = st.text_input("Data kódu", "123456789012")
 
 # --- HLAVNÍ PLOCHA ---
-st.title("🚀 Štítkovač PRO v 2.4.2")
+st.title("🚀 Štítkovač PRO v 2.4.3")
 
 def vytvor_stitek_img(s_mm, v_mm):
     px_w, px_h = int(s_mm * MM_TO_PX), int(v_mm * MM_TO_PX)
@@ -180,12 +184,11 @@ col_preview, col_actions = st.columns([3, 1])
 with col_preview:
     st.subheader("👁️ Živý náhled")
     final_img = vytvor_stitek_img(s_mm, v_mm)
-    # Zde se aplikuje CSS rámeček díky st.image
     st.image(final_img, use_column_width=False, width=int(s_mm * 3.78)) 
 
 with col_actions:
-    st.subheader("ℹ️ Export")
-    if st.button("📄 Vygenerovat PDF", use_container_width=True):
+    st.subheader("📄 Export")
+    if st.button("Vygenerovat PDF", use_container_width=True):
         buffer_pdf = io.BytesIO()
         c = canvas.Canvas(buffer_pdf, pagesize=A4)
         pw, ph = A4
@@ -202,4 +205,11 @@ with col_actions:
         c.save()
         st.download_button("⬇️ Stáhnout PDF", buffer_pdf.getvalue(), "stitky.pdf", use_container_width=True)
 
-st.caption("Verze 2.4.2 | Šedé pozadí a rámeček aktivní")
+# --- PATIČKA S DYNAMICKÝM ROZMĚREM ---
+st.markdown("<br><br><br>", unsafe_allow_html=True)
+st.markdown(
+    f"<p style='text-align: right; color: #000000; font-size: 0.9rem; font-weight: bold;'>"
+    f"Aktuální rozměr vybraného štítku: {s_mm} x {v_mm} mm"
+    "</p>", 
+    unsafe_allow_html=True
+)
