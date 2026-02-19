@@ -156,18 +156,7 @@ with col_actions:
         c.save()
         st.download_button("⬇️ Stáhnout PDF", buffer.getvalue(), "stitky.pdf", use_container_width=True)
 
-    # TLAČÍTKO TISK (JS HACK)
-    if st.button("🖨️ Tisknout", use_container_width=True):
-        img_buffer = io.BytesIO()
-        final_img.save(img_buffer, format="PNG")
-        img_str = base64.b64encode(img_buffer.getvalue()).decode()
-        st.components.v1.html(f"""
-            <script>
-            var win = window.open('', '_blank');
-            win.document.write('<html><body style="margin:0; display:flex; align-items:center; justify-content:center;"><img src="data:image/png;base64,{img_str}" style="max-width:100%;" onload="window.print();window.close();"></body></html>');
-            win.document.close();
-            </script>
-        """, height=0)
 
 # PATIČKA
 st.markdown(f"<div style='margin-top:50px; text-align:right;'><p style='color:#000; font-weight:bold;'>Aktuální rozměr: {s_mm} x {v_mm} mm</p></div>", unsafe_allow_html=True)
+
