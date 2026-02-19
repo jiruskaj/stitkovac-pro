@@ -9,23 +9,34 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 
-st.set_page_config(page_title="Štítkovač PRO v 2.4.1", layout="wide")
+st.set_page_config(page_title="Štítkovač PRO v 2.4.2", layout="wide")
 
-# --- OPRAVENÉ NAČÍTÁNÍ FONTU (Linux Standard) ---
+# --- CSS PRO ŠEDÉ POZADÍ A RÁMEČEK NÁHLEDU ---
+st.markdown("""
+    <style>
+    /* Pozadí celé aplikace */
+    .stApp {
+        background-color: #f0f2f6;
+    }
+    /* Styl pro náhledový obrázek (černá kontura) */
+    .stImage img {
+        border: 2px solid #000000;
+        box-shadow: 5px 5px 15px rgba(0,0,0,0.1);
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- NAČTÁNÍ FONTU ---
 def get_working_font(size):
-    # Seznam cest, kde Linuxové servery Streamlitu mívají fonty
     font_paths = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-        "arial.ttf" # Pro lokální testování na Windows
+        "arial.ttf"
     ]
-    
     for path in font_paths:
         if os.path.exists(path):
             return ImageFont.truetype(path, size)
-    
-    # Pokud žádný nenajde, Streamlit Cloud má knihovnu 'requests', zkusíme záložní URL
     try:
         import requests
         url = "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Bold.ttf"
@@ -34,31 +45,24 @@ def get_working_font(size):
     except:
         return ImageFont.load_default()
 
-# --- KONSTANTY ---
 DPI = 300
 MM_TO_PX = DPI / 25.4
 
 def get_wrapped_text_height(text, font, max_width, spacing):
     lines = []
-    # Bezpečnější výpočet šířky pro zalamování
-    # Pokud je to defaultní font (malý), width musí být vyšší
     avg_char_width = font.getlength("W") if hasattr(font, "getlength") else font.size * 0.5
     char_limit = max(1, int(max_width / avg_char_width))
-    
     for line in text.split('\n'):
         wrapped = textwrap.wrap(line, width=char_limit)
         lines.extend(wrapped if wrapped else [" "])
-    
-    # Výpočet výšky
     try:
         line_heights = [font.getbbox(l)[3] - font.getbbox(l)[1] for l in lines]
     except:
         line_heights = [font.size for l in lines]
-        
     total_height = sum(line_heights) + (len(lines) - 1) * spacing
     return lines, total_height
 
-# --- SIDEBAR (Zůstává stejný dle vašeho přání) ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Nastavení")
     volba_velikosti = st.selectbox("Velikost archu / štítku", [
@@ -92,7 +96,7 @@ with st.sidebar:
         barva_pozadi = st.color_picker("Štítek", "#FFFFFF")
 
     odsazeni_mm = st.slider("Odsazení obsahu (mm)", 0, 20, 5)
-    velikost_fontu = st.slider("Velikost písma", 10, 300, 80) # Zvýšený rozsah
+    velikost_fontu = st.slider("Velikost písma", 10, 300, 80)
     velikost_eanu = st.slider("Velikost EANu (%)", 10, 100, 45)
     radkovani = st.slider("Řádkování", 0, 50, 5)
 
@@ -101,7 +105,7 @@ with st.sidebar:
     data_kodu = st.text_input("Data kódu", "123456789012")
 
 # --- HLAVNÍ PLOCHA ---
-st.title("🚀 Štítkovač PRO v 2.4.1")
+st.title("🚀 Štítkovač PRO v 2.4.2")
 
 def vytvor_stitek_img(s_mm, v_mm):
     px_w, px_h = int(s_mm * MM_TO_PX), int(v_mm * MM_TO_PX)
@@ -112,9 +116,7 @@ def vytvor_stitek_img(s_mm, v_mm):
     img = Image.new("RGB", (px_w, px_h), barva_pozadi)
     draw = ImageDraw.Draw(img)
     
-    # NAČTENÍ FONTU
     font_main = get_working_font(int(velikost_fontu))
-    
     lines, text_h = get_wrapped_text_height(vlastni_text, font_main, inner_w, radkovani)
 
     bc_img_final = None
@@ -135,8 +137,6 @@ def vytvor_stitek_img(s_mm, v_mm):
                 ratio = inner_w / raw_bc_img.size[0]
             
             bars_img = raw_bc_img.resize((int(raw_bc_img.size[0] * ratio), bars_h), Image.Resampling.LANCZOS)
-            
-            # Font pro EAN (čísla)
             font_ean = get_working_font(max(15, int(bars_img.size[0] * 0.1)))
             full_code = bc_obj.get_fullcode()
             
@@ -157,7 +157,6 @@ def vytvor_stitek_img(s_mm, v_mm):
 
     celkova_vyska_obsahu = text_h + bc_total_h
     start_y = padding_px + (inner_h - celkova_vyska_obsahu) / 2
-
     curr_y = start_y
     rgb_textu = tuple(int(barva_textu.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
     
@@ -181,6 +180,7 @@ col_preview, col_actions = st.columns([3, 1])
 with col_preview:
     st.subheader("👁️ Živý náhled")
     final_img = vytvor_stitek_img(s_mm, v_mm)
+    # Zde se aplikuje CSS rámeček díky st.image
     st.image(final_img, use_column_width=False, width=int(s_mm * 3.78)) 
 
 with col_actions:
@@ -191,12 +191,10 @@ with col_actions:
         pw, ph = A4
         grid_w, grid_h = cols * s_mm * mm, rows * v_mm * mm
         sx, sy = (pw - grid_w) / 2, (ph - grid_h) / 2
-        
         img_io = io.BytesIO()
         final_img.save(img_io, format='PNG')
         from reportlab.lib.utils import ImageReader
         ir = ImageReader(img_io)
-        
         for r in range(rows):
             for col in range(cols):
                 c.drawImage(ir, sx + (col * s_mm * mm), ph - (sy + (r + 1) * v_mm * mm), width=s_mm*mm, height=v_mm*mm)
@@ -204,4 +202,4 @@ with col_actions:
         c.save()
         st.download_button("⬇️ Stáhnout PDF", buffer_pdf.getvalue(), "stitky.pdf", use_container_width=True)
 
-st.caption("Verze 2.4.1 | Písmo: Automatická detekce systému")
+st.caption("Verze 2.4.2 | Šedé pozadí a rámeček aktivní")
