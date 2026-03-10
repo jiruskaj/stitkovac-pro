@@ -4,25 +4,59 @@ from barcode.writer import ImageWriter
 from PIL import Image, ImageDraw, ImageFont
 import io
 import textwrap
+import os
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 
-st.set_page_config(page_title="Štítkovač PRO v 2.4", layout="wide")
+st.set_page_config(page_title="Štítkovač PRO v 2.4.2", layout="wide")
 
-# --- KONSTANTY ---
+# --- CSS PRO ŠEDÉ POZADÍ A RÁMEČEK NÁHLEDU ---
+st.markdown("""
+    <style>
+    .stApp { background-color: #f0f2f6; }
+    .stImage img { border: 2px solid #000000; box-shadow: 5px 5px 15px rgba(0,0,0,0.1); }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- NAČTÁNÍ FONTU ---
+def get_working_font(size):
+    font_paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "arial.ttf"
+    ]
+    for path in font_paths:
+        if os.path.exists(path):
+            return ImageFont.truetype(path, size)
+    
+    # Pokud nejsou systémové fonty, zkusíme stáhnout Roboto (který umí měnit velikost)
+    try:
+        import requests
+        url = "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Bold.ttf"
+        r = requests.get(url, timeout=5)
+        return ImageFont.truetype(io.BytesIO(r.content), size)
+    except:
+        # Poslední záchrana (bohužel u load_default nejde měnit velikost)
+        return ImageFont.load_default()
+
 DPI = 300
 MM_TO_PX = DPI / 25.4
 
-def get_wrapped_text_height(text, font, max_width, spacing):
+def get_wrapped_text_lines(text, font, max_width):
     lines = []
+    # Odhad šířky znaku pro zalamování
+    try:
+        avg_char_width = font.getlength("W")
+    except:
+        avg_char_width = font.size * 0.6
+        
+    char_limit = max(1, int(max_width / avg_char_width))
     for line in text.split('\n'):
-        wrapped = textwrap.wrap(line, width=int(max_width / (font.size * 0.45))) 
+        wrapped = textwrap.wrap(line, width=char_limit)
         lines.extend(wrapped if wrapped else [" "])
-    
-    line_heights = [font.getbbox(l)[3] - font.getbbox(l)[1] for l in lines]
-    total_height = sum(line_heights) + (len(lines) - 1) * spacing
-    return lines, total_height
+    return lines
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -58,16 +92,16 @@ with st.sidebar:
         barva_pozadi = st.color_picker("Štítek", "#FFFFFF")
 
     odsazeni_mm = st.slider("Odsazení obsahu (mm)", 0, 20, 5)
-    velikost_fontu = st.slider("Velikost písma", 5, 100, 30)
+    velikost_fontu = st.slider("Velikost písma", 10, 300, 80)
     velikost_eanu = st.slider("Velikost EANu (%)", 10, 100, 45)
-    radkovani = st.slider("Řádkování", 0, 50, 5)
+    radkovani = st.slider("Dodatečné řádkování", 0, 100, 10)
 
     st.divider()
     typ_kodu = st.selectbox("Typ kódu", ["ean13", "ean8", "itf"])
     data_kodu = st.text_input("Data kódu", "123456789012")
 
 # --- HLAVNÍ PLOCHA ---
-st.title("🚀 Štítkovač PRO v 2.1")
+st.title("🚀 Štítkovač PRO v 2.4.2")
 
 def vytvor_stitek_img(s_mm, v_mm):
     px_w, px_h = int(s_mm * MM_TO_PX), int(v_mm * MM_TO_PX)
@@ -78,81 +112,70 @@ def vytvor_stitek_img(s_mm, v_mm):
     img = Image.new("RGB", (px_w, px_h), barva_pozadi)
     draw = ImageDraw.Draw(img)
     
-    try:
-        font_main = ImageFont.truetype("arial.ttf", int(velikost_fontu * (DPI/72)))
-    except:
-        font_main = ImageFont.load_default()
+    # Načtení fontu podle aktuálního slideru
+    font_main = get_working_font(int(velikost_fontu))
     
-    lines, text_h = get_wrapped_text_height(vlastni_text, font_main, inner_w, radkovani)
+    # Příprava textu a výpočet výšky (1.2 je standardní koeficient řádku)
+    lines = get_wrapped_text_lines(vlastni_text, font_main, inner_w)
+    single_line_h = int(velikost_fontu * 1.2)
+    total_text_h = len(lines) * single_line_h + (len(lines) - 1) * radkovani
 
     bc_img_final = None
     bc_total_h = 0
     
+    # Příprava čárového kódu
     if data_kodu.strip():
         try:
-            # Generování EANu bez automatického textu (write_text: False)
             BC = barcode.get_barcode_class(typ_kodu)
-            writer_options = {
-                "module_color": "black", 
-                "background": barva_pozadi, 
-                "write_text": False,  # Text si vykreslíme sami
-                "quiet_zone": 2
-            }
+            writer_options = {"module_color": "black", "background": barva_pozadi, "write_text": False, "quiet_zone": 2}
             bc_obj = BC(data_kodu, writer=ImageWriter())
             raw_bc_img = bc_obj.render(writer_options)
             
-            # Výpočet cílové výšky bloku EANu (čáry + čísla)
             target_block_h = inner_h * (velikost_eanu / 100)
+            bars_h = int(target_block_h * 0.75)
             
-            # Poměr pro změnu velikosti samotných čar (necháme místo na text pod nimi)
-            bar_height_ratio = 0.75 # Čáry zaberou 75% výšky bloku, zbytek text
-            bars_h = int(target_block_h * bar_height_ratio)
-            
-            # Změna velikosti čar při zachování poměru stran
             ratio = bars_h / raw_bc_img.size[1]
             if (raw_bc_img.size[0] * ratio) > inner_w:
                 ratio = inner_w / raw_bc_img.size[0]
             
             bars_img = raw_bc_img.resize((int(raw_bc_img.size[0] * ratio), bars_h), Image.Resampling.LANCZOS)
-            
-            # Vytvoření fontu pro číslo pod EANem (cca 70% šířky kódu)
+            font_ean = get_working_font(max(15, int(bars_img.size[0] * 0.1)))
             full_code = bc_obj.get_fullcode()
-            ean_font_size = int(bars_img.size[0] * 0.1) # Empirický koeficient pro dosažení ~70% šířky
+            
             try:
-                font_ean = ImageFont.truetype("arial.ttf", ean_font_size)
+                # Zjištění šířky a výšky textu pod kódem
+                bbox = draw.textbbox((0, 0), full_code, font=font_ean)
+                tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
             except:
-                font_ean = ImageFont.load_default()
-            
-            # Výpočet rozměrů textu čísla
-            tw, th = draw.textbbox((0, 0), full_code, font=font_ean)[2:]
-            
-            # Spojení čar a textu do jednoho transparentního obrázku
-            bc_block_w = bars_img.size[0]
-            bc_block_h = bars_img.size[1] + th + 5
-            bc_combined = Image.new("RGB", (bc_block_w, bc_block_h), barva_pozadi)
+                tw, th = len(full_code) * 10, 20
+
+            bc_combined = Image.new("RGB", (bars_img.size[0], bars_img.size[1] + th + 10), barva_pozadi)
             bc_combined.paste(bars_img, (0, 0))
-            
-            # Vykreslení čísla pod čáry
             d_bc = ImageDraw.Draw(bc_combined)
-            rgb_textu = tuple(int(barva_textu.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
-            d_bc.text(((bc_block_w - tw) / 2, bars_img.size[1] + 2), full_code, fill="black", font=font_ean)
+            d_bc.text(((bc_combined.size[0] - tw) / 2, bars_img.size[1] + 5), full_code, fill="black", font=font_ean)
             
             bc_img_final = bc_combined
-            bc_total_h = bc_block_h + 15 # Mezera nad blokem
+            bc_total_h = bc_combined.size[1] + 20 
         except Exception as e:
-            st.error(f"Chyba EAN: {e}")
+            st.error(f"EAN Error: {e}")
 
-    # Centrování
-    celkova_vyska_obsahu = text_h + bc_total_h
-    start_y = padding_px + (inner_h - celkova_vyska_obsahu) / 2
-
-    curr_y = start_y
+    # Vystředění celého bloku (text + kód) vertikálně
+    celkova_vyska_vseho = total_text_h + bc_total_h
+    curr_y = padding_px + (inner_h - celkova_vyska_vseho) / 2
+    
     rgb_textu = tuple(int(barva_textu.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
+    
+    # Vykreslení řádků textu
     for line in lines:
-        w, h = draw.textbbox((0, 0), line, font=font_main)[2:]
+        try:
+            w = draw.textlength(line, font=font_main)
+        except:
+            w = len(line) * (velikost_fontu * 0.5)
+            
         draw.text(((px_w - w) / 2, curr_y), line, fill=rgb_textu, font=font_main)
-        curr_y += h + radkovani
+        curr_y += single_line_h + radkovani
 
+    # Vykreslení EANu pod text
     if bc_img_final:
         img.paste(bc_img_final, (int((px_w - bc_img_final.size[0])/2), int(curr_y + 10)))
         
@@ -161,10 +184,9 @@ def vytvor_stitek_img(s_mm, v_mm):
 col_preview, col_actions = st.columns([3, 1])
 
 with col_preview:
-    st.subheader("👁️ Živý náhled 1:1")
+    st.subheader("👁️ Živý náhled")
     final_img = vytvor_stitek_img(s_mm, v_mm)
-    st.image(final_img, width=int(s_mm * 3.78)) 
-    st.caption(f"Přesná velikost štítku: {s_mm} x {v_mm} mm")
+    st.image(final_img, use_container_width=False, width=int(s_mm * 3.78)) 
 
 with col_actions:
     st.subheader("ℹ️ Export")
@@ -172,29 +194,17 @@ with col_actions:
         buffer_pdf = io.BytesIO()
         c = canvas.Canvas(buffer_pdf, pagesize=A4)
         pw, ph = A4
-        grid_w = cols * s_mm * mm
-        grid_h = rows * v_mm * mm
-        start_x = (pw - grid_w) / 2
-        start_y = (ph - grid_h) / 2
-        img_byte_arr = io.BytesIO()
-        final_img.save(img_byte_arr, format='PNG')
-        img_byte_arr.seek(0)
+        grid_w, grid_h = cols * s_mm * mm, rows * v_mm * mm
+        sx, sy = (pw - grid_w) / 2, (ph - grid_h) / 2
+        img_io = io.BytesIO()
+        final_img.save(img_io, format='PNG')
         from reportlab.lib.utils import ImageReader
-        ir = ImageReader(img_byte_arr)
+        ir = ImageReader(img_io)
         for r in range(rows):
             for col in range(cols):
-                x = start_x + (col * s_mm * mm)
-                y = ph - (start_y + (r + 1) * v_mm * mm)
-                c.drawImage(ir, x, y, width=s_mm*mm, height=v_mm*mm)
+                c.drawImage(ir, sx + (col * s_mm * mm), ph - (sy + (r + 1) * v_mm * mm), width=s_mm*mm, height=v_mm*mm)
         c.showPage()
         c.save()
-        st.download_button("⬇️ Stáhnout PDF", buffer_pdf.getvalue(), "stitky.pdf", "application/pdf", use_container_width=True)
+        st.download_button("⬇️ Stáhnout PDF", buffer_pdf.getvalue(), "stitky.pdf", use_container_width=True)
 
-# --- PATIČKA ---
-st.markdown("<br><br><br>", unsafe_allow_html=True)
-st.markdown(
-    "<p style='text-align: right; color: gray; font-size: 0.8rem;'>"
-    "Štítkovač PRO v 2.1 pro Vás připravil Jakub Jiruška v roce 2026"
-    "</p>", 
-    unsafe_allow_html=True
-)
+st.caption("Verze 2.4.2 | Opravena dynamická velikost fontu")
