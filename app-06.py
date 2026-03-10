@@ -5,6 +5,7 @@ from PIL import Image, ImageDraw, ImageFont
 import io
 import textwrap
 import os
+import requests
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
@@ -21,28 +22,44 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- POMOCNÉ FUNKCE ---
+# --- OPRAVENÉ NAČÍTÁNÍ FONTU ---
+@st.cache_data
 def get_working_font(size):
-    font_paths = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf", "arial.ttf"]
+    # Cesty pro Linux/Streamlit Cloud
+    font_paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+    ]
     for path in font_paths:
-        if os.path.exists(path): return ImageFont.truetype(path, size)
-    return ImageFont.load_default()
+        if os.path.exists(path):
+            return ImageFont.truetype(path, size)
+    
+    # ZÁCHRANA: Stažení škálovatelného fontu z internetu
+    try:
+        url = "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Bold.ttf"
+        r = requests.get(url, timeout=5)
+        return ImageFont.truetype(io.BytesIO(r.content), size)
+    except:
+        # Default font v Pillow NEUMÍ měnit velikost, proto je to až poslední možnost
+        return ImageFont.load_default()
 
 DPI = 300
 MM_TO_PX = DPI / 25.4
 
-def get_wrapped_text_height(text, font, max_width, spacing):
+def get_wrapped_text_lines(text, font, max_width):
     lines = []
-    avg_char_w = font.getlength("W") if hasattr(font, "getlength") else font.size * 0.5
+    # Odhad šířky znaku pro zalamování
+    try:
+        avg_char_w = font.getlength("W")
+    except:
+        avg_char_w = font.size * 0.5
+        
     char_limit = max(1, int(max_width / avg_char_w))
     for line in text.split('\n'):
         wrapped = textwrap.wrap(line, width=char_limit)
         lines.extend(wrapped if wrapped else [" "])
-    try:
-        line_heights = [font.getbbox(l)[3] - font.getbbox(l)[1] for l in lines]
-    except:
-        line_heights = [font.size for l in lines]
-    return lines, sum(line_heights) + (len(lines) - 1) * spacing
+    return lines
 
 # --- SESSION STATE PRO IKONY ---
 if 'selected_icon' not in st.session_state:
@@ -99,7 +116,6 @@ with st.sidebar:
     uploaded_file = None
     if pozice_loga != "Bez obrázku":
         velikost_loga_mm = st.slider("Velikost obrázku (mm)", 10, int(min(s_mm, v_mm)), 20)
-        # NOVINKA: Dodatečné odsazení pouze pro obrázek
         odsazeni_loga_extra = st.slider("Dodatečné odsazení obrázku (mm)", 0, 50, 0)
         
         icon_folder = "assets"
@@ -124,12 +140,12 @@ with st.sidebar:
 def vytvor_stitek_img(s_mm, v_mm):
     px_w, px_h = int(s_mm * MM_TO_PX), int(v_mm * MM_TO_PX)
     padding_px = int(odsazeni_mm * MM_TO_PX)
-    # Celkové odsazení loga (hlavní + dodatečné)
-    logo_padding_px = int((odsazeni_mm + odsazeni_loga_extra if pozice_loga != "Bez obrázku" else odsazeni_mm) * MM_TO_PX)
+    logo_padding_px = int((odsazeni_mm + (odsazeni_loga_extra if pozice_loga != "Bez obrázku" else 0)) * MM_TO_PX)
     
     img = Image.new("RGB", (px_w, px_h), barva_pozadi)
     draw = ImageDraw.Draw(img)
     
+    # 1. Logo
     logo_img = None
     if uploaded_file:
         logo_img = Image.open(uploaded_file).convert("RGBA")
@@ -142,7 +158,6 @@ def vytvor_stitek_img(s_mm, v_mm):
         logo_img.thumbnail((l_size, l_size), Image.Resampling.LANCZOS)
         lw, lh = logo_img.size
         
-        # Umístění respektující součet odsazení
         if pozice_loga == "Zarovnat na střed nahoru": pos = ((px_w - lw)//2, logo_padding_px)
         elif pozice_loga == "Zarovnat na střed dolů": pos = ((px_w - lw)//2, px_h - lh - logo_padding_px)
         elif pozice_loga == "Levý horní roh": pos = (logo_padding_px, logo_padding_px)
@@ -152,41 +167,55 @@ def vytvor_stitek_img(s_mm, v_mm):
         
         img.paste(logo_img, pos, logo_img)
 
-    # Text a EAN
-    font_main = get_working_font(int(velikost_fontu))
-    inner_w, inner_h = px_w - (2 * padding_px), px_h - (2 * padding_px)
-    lines, text_h = get_wrapped_text_height(vlastni_text, font_main, inner_w, radkovani)
+    # 2. Načtení fontu a textu
+    fnt = get_working_font(int(velikost_fontu))
+    inner_w = px_w - (2 * padding_px)
+    lines = get_wrapped_text_lines(vlastni_text, fnt, inner_w)
+    
+    # OPRAVA: Fixní výška řádku pro spolehlivost
+    single_line_h = int(velikost_fontu * 1.2)
+    total_text_h = len(lines) * single_line_h + (len(lines) - 1) * radkovani
 
+    # 3. Čárový kód
     bc_img_final, bc_total_h = None, 0
     if data_kodu.strip():
         try:
             BC = barcode.get_barcode_class(typ_kodu)
             bc_obj = BC(data_kodu, writer=ImageWriter())
-            raw_bc_img = bc_obj.render({"module_color": "black", "background": barva_pozadi, "write_text": False, "quiet_zone": 2})
-            target_h = inner_h * (velikost_eanu / 100)
+            raw_bc_img = bc_obj.render({"module_color": "black", "background": barva_pozadi, "write_text": False})
+            
+            target_h = (px_h - (2 * padding_px)) * (velikost_eanu / 100)
             bars_h = int(target_h * 0.75)
             ratio = min(bars_h / raw_bc_img.size[1], inner_w / raw_bc_img.size[0])
             bars_img = raw_bc_img.resize((int(raw_bc_img.size[0] * ratio), bars_h), Image.Resampling.LANCZOS)
-            font_ean = get_working_font(int(bars_img.size[0] * 0.1))
-            tw, th = draw.textbbox((0, 0), bc_obj.get_fullcode(), font=font_ean)[2:]
+            
+            font_ean = get_working_font(max(15, int(bars_img.size[0] * 0.1)))
+            full_code = bc_obj.get_fullcode()
+            tw = draw.textlength(full_code, font=font_ean)
+            th = int(font_ean.size * 1.2)
+            
             bc_combined = Image.new("RGB", (bars_img.size[0], bars_img.size[1] + th + 5), barva_pozadi)
             bc_combined.paste(bars_img, (0, 0))
-            ImageDraw.Draw(bc_combined).text(((bc_combined.size[0] - tw) / 2, bars_img.size[1] + 2), bc_obj.get_fullcode(), fill="black", font=font_ean)
-            bc_img_final, bc_total_h = bc_combined, bc_combined.size[1] + 15
+            ImageDraw.Draw(bc_combined).text(((bc_combined.size[0] - tw) / 2, bars_img.size[1] + 2), full_code, fill="black", font=font_ean)
+            bc_img_final, bc_total_h = bc_combined, bc_combined.size[1] + 20
         except: pass
 
-    # Vertikální centrování - text se vyhýbá logu
+    # 4. Výpočet vertikální pozice (vyhýbání se logu)
     t_mar, b_mar = padding_px, padding_px
     if pozice_loga == "Zarovnat na střed nahoru" and logo_img: t_mar = lh + logo_padding_px + 10
     if pozice_loga == "Zarovnat na střed dolů" and logo_img: b_mar = lh + logo_padding_px + 10
 
-    curr_y = t_mar + (px_h - t_mar - b_mar - (text_h + bc_total_h)) / 2
+    curr_y = t_mar + (px_h - t_mar - b_mar - (total_text_h + bc_total_h)) / 2
     rgb_textu = tuple(int(barva_textu.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
+    
     for line in lines:
-        w, h = draw.textbbox((0, 0), line, font=font_main)[2:]
-        draw.text(((px_w - w) / 2, curr_y), line, fill=rgb_textu, font=font_main)
-        curr_y += h + radkovani
-    if bc_img_final: img.paste(bc_img_final, (int((px_w - bc_img_final.size[0])/2), int(curr_y + 10)))
+        w = draw.textlength(line, font=fnt)
+        draw.text(((px_w - w) / 2, curr_y), line, fill=rgb_textu, font=fnt)
+        curr_y += single_line_h + radkovani
+        
+    if bc_img_final: 
+        img.paste(bc_img_final, (int((px_w - bc_img_final.size[0])/2), int(curr_y + 10)))
+        
     return img
 
 # --- VÝSTUP ---
