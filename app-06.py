@@ -9,27 +9,31 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
 
-st.set_page_config(page_title="Štítkovač PRO v 2.6.7", layout="wide")
+st.set_page_config(page_title="Štítkovač PRO v 2.6.8", layout="wide")
 
-# --- CSS PRO STYLOVÁNÍ ---
+# --- CSS ---
 st.markdown("""
     <style>
     .stApp { background-color: #31333F; }
     .main h1, .main h2, .main h3, .main p { color: #FFFFFF !important; }
-    img { border: 2px solid #000000; background-color: white; }
+    img { border: 1px solid #444; background-color: white; border-radius: 5px; }
+    /* Styl pro klikatelné obrázky v sidebaru */
+    [data-testid="stHorizontalBlock"] img:hover {
+        border: 2px solid #ff4b4b;
+        cursor: pointer;
+        transform: scale(1.05);
+        transition: 0.2s;
+    }
     div.stButton > button { font-size: 14px; padding: 5px 20px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- FUNKCE PRO NAČÍTÁNÍ FONTU (KLÍČ K ÚSPĚCHU) ---
+# --- FONT ---
 def get_font(size):
-    # Hledáme soubor font.ttf přímo v kořenovém adresáři aplikace na GitHubu
     font_path = "font.ttf"
     if os.path.exists(font_path):
         return ImageFont.truetype(font_path, size)
     else:
-        # Pokud soubor chybí, vypíšeme varování v sidebar
-        st.sidebar.error("❌ Soubor 'font.ttf' nenalezen v repozitáři! Velikost a diakritika nebudou fungovat.")
         return ImageFont.load_default()
 
 DPI = 300
@@ -50,11 +54,11 @@ def wrap_text(text, font, max_width_px):
         lines.extend(textwrap.wrap(p, width=char_limit))
     return lines
 
-# --- SESSION STATE ---
+# --- SESSION STATE PRO IKONY ---
 if 'selected_icon' not in st.session_state:
     st.session_state.selected_icon = "Žádná"
 
-# --- SIDEBAR - NASTAVENÍ ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Nastavení")
     
@@ -82,7 +86,7 @@ with st.sidebar:
         s_mm, v_mm, cols, rows = layout_map[volba_velikosti]
 
     st.divider()
-    vlastni_text = st.text_area("Text na štítku", "Příliš žluťoučký kůň úpěl", height=100)
+    vlastni_text = st.text_area("Text na štítku", "Příliš žluťoučký kůň", height=100)
     
     col_c1, col_c2 = st.columns(2)
     with col_c1: barva_textu = st.color_picker("Barva písma", "#000000")
@@ -90,34 +94,41 @@ with st.sidebar:
 
     velikost_fontu = st.slider("Velikost písma", 10, 300, 80)
     radkovani = st.slider("Mezery mezi řádky", 0, 50, 5)
-    odsazeni_mm = st.slider("Odsazení obsahu (mm)", 0, 20, 5)
-    
+    odsazeni_mm = st.slider("Odsazení obsahu (mm)", 0, 30, 0) # Odsazení 0 je nyní základem
+    velikost_eanu = st.slider("Velikost EANu (%)", 5, 100, 40) # Přesunuto sem
+
     st.divider()
     typ_kodu = st.selectbox("Typ kódu", ["ean13", "ean8", "itf"])
     data_kodu = st.text_input("Data kódu", "123456789012")
-    velikost_eanu = st.slider("Velikost EANu (%)", 10, 100, 45)
 
     st.divider()
-    pozice_loga = st.selectbox("Umístění obrázku", [
+    pozice_loga = st.selectbox("Umístění loga/ikony", [
         "Bez obrázku", "Střed nahoru", "Střed dolů", 
         "Levý horní", "Pravý horní", "Levý dolní", "Pravý dolní"
     ])
 
     uploaded_file = st.file_uploader("Nahrát vlastní PNG logo", type=["png"])
     
+    # Galerie ikon s klikáním na obrázek
     icon_folder = "assets"
     if os.path.exists(icon_folder):
         available_icons = [f for f in os.listdir(icon_folder) if f.lower().endswith('.png')]
         if available_icons:
-            st.write("🖼️ Ikony v assets:")
+            st.write("🖼️ Klikněte na ikonu pro výběr:")
             cols_icon = st.columns(3)
-            for i, icon in enumerate(available_icons):
+            for i, icon_name in enumerate(available_icons):
                 with cols_icon[i % 3]:
-                    st.image(os.path.join(icon_folder, icon), width=40)
-                    if st.button("Vybrat", key=f"icon_{icon}"):
-                        st.session_state.selected_icon = icon
+                    # Použití buttonu s obrázkem jako "klikací ikona"
+                    if st.button(" ", key=f"ico_{icon_name}", help=f"Vybrat {icon_name}"):
+                        st.session_state.selected_icon = icon_name
+                    # Zobrazení obrázku přes button (vizuální hack pro Streamlit)
+                    st.image(os.path.join(icon_folder, icon_name), use_container_width=True)
 
-# --- GENERÁTOR OBRÁZKU ---
+            if st.button("❌ Zrušit výběr ikony"):
+                st.session_state.selected_icon = "Žádná"
+            st.caption(f"Vybráno: {st.session_state.selected_icon}")
+
+# --- GENERÁTOR ---
 def vytvor_stitek():
     px_w, px_h = int(s_mm * MM_TO_PX), int(v_mm * MM_TO_PX)
     padding_px = int(odsazeni_mm * MM_TO_PX)
@@ -125,10 +136,9 @@ def vytvor_stitek():
     img = Image.new("RGB", (px_w, px_h), barva_pozadi)
     draw = ImageDraw.Draw(img)
     
-    # 1. Načtení fontu (Důležité pro velikost a diakritiku)
     fnt = get_font(int(velikost_fontu))
     
-    # 2. Logo
+    # Logo/Ikona
     logo_h_px = 0
     l_img = None
     if uploaded_file:
@@ -138,26 +148,24 @@ def vytvor_stitek():
         if os.path.exists(p): l_img = Image.open(p).convert("RGBA")
     
     if l_img and pozice_loga != "Bez obrázku":
-        l_size = int(v_mm * 0.2 * MM_TO_PX) # Automatická velikost loga
+        l_size = int(v_mm * 0.25 * MM_TO_PX) 
         l_img.thumbnail((l_size, l_size), Image.Resampling.LANCZOS)
         lw, lh = l_img.size
         logo_h_px = lh + 10
         
-        # Pozice loga
         if "Střed nahoru" in pozice_loga: pos = ((px_w-lw)//2, padding_px)
         elif "Střed dolů" in pozice_loga: pos = ((px_w-lw)//2, px_h-lh-padding_px)
         elif "Levý horní" in pozice_loga: pos = (padding_px, padding_px)
         elif "Pravý horní" in pozice_loga: pos = (px_w-lw-padding_px, padding_px)
         else: pos = (padding_px, px_h-lh-padding_px)
-        
         img.paste(l_img, pos, l_img)
 
-    # 3. Text
+    # Text - Zmenšené odřádkování (1.0)
     lines = wrap_text(vlastni_text, fnt, px_w - 2*padding_px)
-    line_h = int(velikost_fontu * 1.2)
-    total_text_h = len(lines) * line_h + (len(lines)-1) * radkovani
+    line_h = int(velikost_fontu * 1.0) 
+    total_text_h = len(lines) * line_h + (max(0, len(lines)-1) * radkovani)
 
-    # 4. EAN
+    # EAN
     bc_img, bc_h = None, 0
     if data_kodu.strip():
         try:
@@ -169,22 +177,26 @@ def vytvor_stitek():
             ratio = min(target_h / raw_bc.size[1], (px_w - 2*padding_px) / raw_bc.size[0])
             bc_img = raw_bc.resize((int(raw_bc.size[0]*ratio), int(raw_bc.size[1]*ratio)), Image.Resampling.LANCZOS)
             
-            # Text pod EANem
-            f_ean = get_font(max(15, int(bc_img.size[1]*0.2)))
+            f_ean = get_font(max(12, int(bc_img.size[1]*0.18)))
             full_c = bc_obj.get_fullcode()
             tw = draw.textlength(full_c, font=f_ean)
             
-            comb = Image.new("RGB", (bc_img.size[0], bc_img.size[1] + int(f_ean.size*1.3)), barva_pozadi)
+            comb = Image.new("RGB", (bc_img.size[0], bc_img.size[1] + int(f_ean.size*1.2)), barva_pozadi)
             comb.paste(bc_img, (0,0))
             ImageDraw.Draw(comb).text(((comb.size[0]-tw)/2, bc_img.size[1]), full_c, fill="black", font=f_ean)
-            bc_img, bc_h = comb, comb.size[1] + 20
+            bc_img, bc_h = comb, comb.size[1] + 15
         except: pass
 
-    # 5. Finální seskládání (Centrování)
-    curr_y = (px_h - (total_text_h + bc_h)) // 2
-    # Pokud je logo nahoře, posuneme start textu
+    # Výpočet vertikálního středu s ohledem na padding
+    usable_h = px_h - (2 * padding_px)
+    content_h = total_text_h + bc_h
+    
+    # Základní startovní Y pozice (absolutní střed)
+    curr_y = padding_px + (usable_h - content_h) // 2
+
+    # Úprava pokud logo překáží textu
     if "nahoru" in pozice_loga.lower() or "horní" in pozice_loga.lower():
-        curr_y = max(curr_y, logo_h_px + padding_px)
+        curr_y = max(curr_y, padding_px + logo_h_px)
 
     rgb = tuple(int(barva_textu.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
     for l in lines:
@@ -193,33 +205,32 @@ def vytvor_stitek():
         curr_y += line_h + radkovani
     
     if bc_img:
-        img.paste(bc_img, ((px_w - bc_img.size[0])//2, int(curr_y + 10)))
+        # EAN se vykreslí pod text, ale maximálně k dolnímu okraji (paddingu)
+        ean_y = min(curr_y + 10, px_h - bc_h - padding_px)
+        img.paste(bc_img, ((px_w - bc_img.size[0])//2, int(ean_y)))
         
     return img
 
 # --- HLAVNÍ PLOCHA ---
-st.title("🚀 Štítkovač PRO v 2.6.7")
+st.title("🚀 Štítkovač PRO v 2.6.8")
 
-col_left, col_right = st.columns([3, 1])
+c_preview, c_export = st.columns([3, 1])
 
-with col_left:
-    st.subheader("👁️ Živý náhled")
+with c_preview:
     img_preview = vytvor_stitek()
-    st.image(img_preview, width=int(s_mm * 3.8)) # Zvětšení pro monitor
+    st.image(img_preview, width=int(s_mm * 3.8))
 
-with col_right:
+with c_export:
     st.subheader("💾 Export")
     if st.button("📄 Vygenerovat PDF", use_container_width=True):
         buf = io.BytesIO()
         orient = landscape(A4) if (volba_velikosti == "Velké štítky 2x2 (4 ks)" and orientace_2x2 == "Na šířku") else A4
         c = canvas.Canvas(buf, pagesize=orient)
         pw, ph = orient
-        
         img_io = io.BytesIO()
         img_preview.save(img_io, format='PNG')
         from reportlab.lib.utils import ImageReader
         ir = ImageReader(img_io)
-        
         sx, sy = (pw - cols*s_mm*mm)/2, (ph - rows*v_mm*mm)/2
         for r in range(rows):
             for col in range(cols):
@@ -227,4 +238,4 @@ with col_right:
         c.save()
         st.download_button("⬇️ Stáhnout PDF", buf.getvalue(), "stitky.pdf", use_container_width=True)
 
-st.caption(f"Aktuální rozměr štítku: {s_mm} x {v_mm} mm | Rozlišení: 300 DPI")
+st.caption(f"Nastaveno: {s_mm}x{v_mm}mm | Odsazení: {odsazeni_mm}mm (0mm = okraj)")
